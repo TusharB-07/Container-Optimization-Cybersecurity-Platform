@@ -3,9 +3,19 @@
 # Usage:  ./run.sh [LAB_PAIR]
 #   LAB_PAIR=legacy (default) -> baseline on the current-state images
 #   LAB_PAIR=opt            -> same harness, optimised images (Phase 5)
+#   LAB_PAIR=live           -> on-demand measurement of ONE optimised pair, published to
+#                              benchmark/live/latest.json and served by GET /benchmarks
+#                              (delegate to measure-live.sh; it owns the protocol)
 # Produces benchmark/reports/run-<ts>/{images,coldstart,idle,ramp,summary}.json + report.md
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# `live` is a different shape of run (no report dir, no ramp): it measures the idle pair
+# and publishes a provenance-stamped artifact instead of a Phase 0/5 report.
+if [[ "${1:-legacy}" == live ]]; then
+  exec ./measure-live.sh "${@:2}"
+fi
+
 source ./lib.sh
 
 export LAB_PAIR="${1:-legacy}"

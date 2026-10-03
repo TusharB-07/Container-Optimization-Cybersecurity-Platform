@@ -144,35 +144,36 @@
                 <h2>[OK] Demo Results</h2>
                 <div class="metric-grid">
                     <div class="metric">
-                        <div class="metric-value" id="card-att-size">342 MiB</div>
+                        <div class="metric-value" id="card-att-size">&mdash;</div>
                         <div class="metric-label">Attacker Image (measured)</div>
                     </div>
                     <div class="metric">
-                        <div class="metric-value" id="card-tgt-size">275 MiB</div>
+                        <div class="metric-value" id="card-tgt-size">&mdash;</div>
                         <div class="metric-label">Target Image (measured)</div>
                     </div>
                     <div class="metric">
-                        <div class="metric-value" id="card-att-red">90.6%</div>
+                        <div class="metric-value" id="card-att-red">&mdash;</div>
                         <div class="metric-label">Attacker Size Reduction</div>
                     </div>
                     <div class="metric">
-                        <div class="metric-value" id="card-tgt-red">71.2%</div>
+                        <div class="metric-value" id="card-tgt-red">&mdash;</div>
                         <div class="metric-label">Target Size Reduction</div>
                     </div>
                     <div class="metric">
-                        <div class="metric-value">4.4 s</div>
+                        <div class="metric-value" id="card-coldstart">&mdash;</div>
                         <div class="metric-label">Cold Start to Healthy</div>
                     </div>
                     <div class="metric">
-                        <div class="metric-value" id="card-ram">45.4 MiB</div>
+                        <div class="metric-value" id="card-ram">&mdash;</div>
                         <div class="metric-label">Idle RAM per Pair</div>
                     </div>
                     <div class="metric">
-                        <div class="metric-value" id="card-conc">1.7×</div>
-                        <div class="metric-label">Concurrent Sessions (37 → 62)</div>
+                        <div class="metric-value" id="card-conc">&mdash;</div>
+                        <div class="metric-label">Concurrent Sessions</div>
                     </div>
                 </div>
-                <p style="font-size:12px;color:#666666;margin-top:15px;" id="source-note">Measured on host with limits.env quotas enforced. Source: live API (/benchmarks) & docs/before-after-measurements.json.</p>
+                <p style="font-size:12px;color:#666666;margin-top:15px;" id="source-note">Waiting for <code>GET /benchmarks</code>…</p>
+                <p style="font-size:12px;color:#666666;" id="bm-provenance-note">Provenance rule: a number tagged <strong>LIVE</strong> was measured now and carries its <code>generated_at</code>; anything tagged <strong>BASELINE</strong> is the recorded 2026-10-01 artifact.</p>
             </div>
         </div>
     </div>
@@ -199,8 +200,15 @@
                     if (bm.concurrency) {
                         document.getElementById('card-conc').textContent = bm.concurrency.ratio + '×';
                     }
+                    if (typeof bm.cold_start_s === 'number') {
+                        document.getElementById('card-coldstart').textContent = bm.cold_start_s + ' s';
+                    }
                     if (bm.host) {
-                        document.getElementById('source-note').textContent = `Host: ${bm.host.vcpu} vCPU / ${bm.host.ram_gib} GiB (${bm.date}). Source: ${bm.source}`;
+                        // say WHERE each half came from — a live run has no generated_at
+                        // of its own in the recorded file, and vice versa
+                        const isLive = bm.source === 'live';
+                        document.getElementById('source-note').textContent =
+                            `${isLive ? 'LIVE' : 'BASELINE'} · host ${bm.host.vcpu} vCPU / ${bm.host.ram_gib} GiB · ${isLive ? 'measured ' + bm.generated_at : 'recorded ' + (bm.date || '2026-10-01')}`;
                     }
                 }
             } catch (_) {}

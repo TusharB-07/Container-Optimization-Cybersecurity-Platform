@@ -33,12 +33,18 @@ The page is monochrome by design and polls the API every 5 seconds. Click
 **Start Demo Session** to create a `tech-lead-demo` pair — this does need the
 images built (Option B step 1) and a running Docker daemon.
 
+The benchmark table carries a **LIVE / BASELINE** badge plus the `generated_at` of
+whatever it displays, and **Re-run benchmark** measures a fresh pair on the spot
+(`POST /benchmarks/run` → polls `GET /benchmarks/status` → refreshes). Until you run
+one, every figure renders as **BASELINE** from the recorded 2026-10-01 artifact. See
+[§ Benchmarks](#benchmarks) for the provenance rule.
+
 Other UI variants, same server:
 
 | File | Use |
 |---|---|
-| `demo.html` | main dashboard with the before/after comparison table |
-| `demo-webpage.html` | wider dashboard, adds a live container list |
+| `demo.html` | main dashboard: before/after table, LIVE/BASELINE badges, Re-run benchmark |
+| `demo-webpage.html` | wider dashboard, live container list, provenance banner |
 | `demo-simple.html` | minimal version, metrics only |
 
 Run the pieces manually if you'd rather not use the script:
@@ -100,7 +106,11 @@ docker compose --env-file orchestrator/limits.env -f compose/session.yml up -d
 docker compose -f compose/monitoring.yml up -d
 #    Grafana: http://localhost:3000 (admin/admin), dashboard "Per-Session Resource Usage"
 
-# 9. Tests — no real Docker needed (fake CLI injected by the harness)
+# 9. Measure the optimized pair right now (serves as LIVE on the dashboards)
+./benchmark/run.sh live              # or click "Re-run benchmark" in the demo
+#    dry-run first if you have no daemon: ./benchmark/measure-live.sh --dry-run
+
+# 10. Tests — no real Docker needed (fake CLI injected by the harness)
 node --test orchestrator/test/
 bash ci/smoke.sh
 ```
@@ -111,6 +121,7 @@ bash ci/smoke.sh
 |---|---|
 | `docker: command not found` / cannot connect | Docker Desktop isn't running — start it, then `docker ps` |
 | Demo page shows "Offline" | API isn't up. `curl localhost:8080/sessions`; restart with `PORT=8080 node orchestrator/api.js` |
+| Live measurement never finishes | Check `curl -s localhost:8080/benchmarks/status` — a wedged job reports `running` with an `error` tail; `rm orchestrator/.state/benchmarks-status.json` to clear a stale flag. Only one job runs at a time (409 otherwise) |
 | Session create fails on missing image | Build first: `./images/build.sh all`, or set `BUNDLE_IMAGE`/`TARGET_IMAGE` to your local tags |
 | Session create fails with `network ... already exists` | An earlier run left an orphan network. `provision.sh` now clears stale containers/network for the session id first; to sweep all of them: `for n in $(docker network ls -q --filter name=sess-); do docker network rm $n; done` |
 | Port 3000 busy | `start-demo.sh` falls back to 3001; watch the printed URL |
@@ -134,7 +145,8 @@ benchmark unit stages are not.
 images/                # Multi-stage base + lab bundles + vulnerable target
 orchestrator/          # Lifecycle API, provision/reaper/prune scripts, limits.env
 compose/               # session.yml (one pair) + monitoring.yml (cAdvisor→Prom→Grafana)
-benchmark/             # Phase 0/5 harness — bash driver + Node ramp; model.py capacity model
+benchmark/             # Phase 0/5 harness — bash driver + Node ramp; measure-live.sh;
+                       #   model.py capacity model
 legacy-images/         # "current-state" reproduction images for the Phase 0 baseline
 lab-configs/           # Lab → bundle/target config stubs (validates FR-18 assumption)
 monitoring/            # Prometheus + Grafana provisioning
@@ -161,7 +173,42 @@ demo*.html, *.sh       # Local demo UI and runner scripts (not part of the platf
 ```bash
 ./benchmark/run.sh legacy          # Phase 0 baseline (current-state images)
 ./benchmark/run.sh opt             # same harness against optimized images
+./benchmark/run.sh live            # live measurement of ONE optimized pair (default)
+./benchmark/measure-live.sh --dry-run   # same control flow, fake docker — no daemon needed
 ```
+
+### `/benchmarks` serves live measurements, with the recorded baseline as fallback
+
+`GET /benchmarks` prefers a **live** measurement and falls back to the **recorded**
+2026-10-01 artifact:
+
+| | live | recorded baseline |
+|---|---|---|
+| file | `benchmark/live/latest.json` (git-ignored, regenerate on demand) | `docs/before-after-measurements.json` (committed, audited Phase-5 record) |
+| `source` tag | `"live"` + mandatory `generated_at` per run | `"recorded-baseline"` + `date: 2026-10-01` |
+| produced by | `benchmark/measure-live.sh` — provisions one pair through `orchestrator/provision.sh` (FR-06 limits), waits for both healthchecks, settles, samples | the 2026-10-01 same-host run under an identical protocol |
+| covers | optimized pair: cold start, idle RAM/CPU/procs, host gauges, per-sample raw values | both image sets, image sizes, concurrency ramp, cold start |
+
+Endpoints:
+
+```bash
+curl -s localhost:8080/benchmarks         # merged view + metric_source + provenance
+curl -s -X POST localhost:8080/benchmarks/run   # 202 {job_id}; 409 while one is running
+curl -s localhost:8080/benchmarks/status  # {running, last_run_at, error?}
+```
+
+**Provenance rule.** A number displayed as **LIVE** was measured by
+`measure-live.sh` and must be shown with its `generated_at`. A number displayed as
+**BASELINE** comes from `docs/before-after-measurements.json` and always renders with
+the BASELINE badge — it is frozen and must never be re-dated by a re-run. The API
+tags each metric group in `metric_source` so a UI cannot mix the two silently, and no
+number in the response path is hardcoded. Deleting `benchmark/live/latest.json` reverts
+every surface to the labelled baseline; with neither artifact present the endpoint
+answers `{"available": false}` instead of failing.
+
+Protocol knobs are not duplicated in the script or the API — they live in the `BENCH_*`
+block of `orchestrator/lifecycle.env` (`BENCH_SETTLE_S=60`, `BENCH_SAMPLES=8`,
+`BENCH_SAMPLE_INTERVAL_S=8`), which is also what `/benchmarks/status` reports.
 
 Individual stages (all write JSON into a `benchmark/reports/run-<ts>-<pair>/` dir,
 which is git-ignored):
@@ -180,7 +227,7 @@ and `docs/decisions.md` for methodology + host caveats.
 
 ## Key documents
 
-- `docs/final-benchmark-report.md` — before/after matrix, KPI scorecard, sign-off gates G1–G4, §6 DoD sign-off record + §12 open-question resolutions
+- `docs/final-benchmark-report.md` — before/after matrix, KPI scorecard, sign-off gates G1–G4, §7 DoD sign-off record + §12 open-question resolutions
 - `docs/scaling-strategy.md` — FR-15: density limits, capacity formula, sharding path, triggers, cost model
 - `docs/bundle-authoring-guide.md` — lab-author guide for new bundles (image skeleton, CI registration, Compose validation workflow, FR-18 SSH opt-in policy)
 - `docs/audit-real-measurements.md` + `.json` — **measured** idle/cold-start/concurrency figures from this host, with reproduction commands. The legacy baseline is not re-measurable here (no legacy images); the optimized side is fully measured.

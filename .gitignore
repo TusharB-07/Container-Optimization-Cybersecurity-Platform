@@ -10,6 +10,9 @@ orchestrator/.state/
 # --- Benchmark scratch output (raw runs; curated results live in docs/) ---
 benchmark/reports/
 benchmark-output/
+# Live measurements are host-specific and re-measurable: the audited record is
+# docs/before-after-measurements.json, so nothing here is ever committed.
+benchmark/live/
 **/__pycache__/
 *.pyc
 

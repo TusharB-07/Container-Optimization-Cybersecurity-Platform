@@ -303,44 +303,49 @@
 
         <div class="results-section" id="results-section">
             <h2> Demo Results</h2>
-            <p style="color:#666666;font-size:13px;">All values measured on an 8 vCPU / 8 GiB host with orchestrator/limits.env quotas enforced. Full method and raw JSON: docs/before-after-measurements.md</p>
+            <p style="color:#666666;font-size:13px;">Values come from <code>GET /benchmarks</code>: a live measurement of one optimized pair when one exists, otherwise the recorded 2026-10-01 baseline (<code>docs/before-after-measurements.json</code>). Provenance rule: a number tagged LIVE always shows its <code>generated_at</code>; a number tagged BASELINE is the frozen recorded artifact. Re-measure with <code>POST /benchmarks/run</code>.</p>
+            <div class="result-item" style="text-align:left;">
+                <div class="label">Benchmark provenance</div>
+                <div class="value" id="bm-badge-text">loading…</div>
+                <div class="timestamp" id="bm-generated-at"></div>
+            </div>
             
             <div class="results-grid">
                 <div class="result-item">
                     <div class="label">Image Size Reduction</div>
-                    <div class="value" id="card-att-size">342 MiB</div>
+                    <div class="value" id="card-att-size">&mdash;</div>
                     <div class="improvement">Attacker Image</div>
-                    <div class="timestamp">measured on host</div>
+                    <div class="timestamp">recorded baseline (not re-measured per run)</div>
                 </div>
                 <div class="result-item">
                     <div class="label">Image Size Reduction</div>
-                    <div class="value" id="card-tgt-size">275 MiB</div>
+                    <div class="value" id="card-tgt-size">&mdash;</div>
                     <div class="improvement">Target Image</div>
-                    <div class="timestamp">measured on host</div>
+                    <div class="timestamp">recorded baseline (not re-measured per run)</div>
                 </div>
                 <div class="result-item">
                     <div class="label">Cold Start Time</div>
-                    <div class="value">4.4 s</div>
+                    <div class="value" id="card-coldstart">&mdash;</div>
                     <div class="improvement">Cold Start to Healthy</div>
                     <div class="timestamp">healthcheck-gated</div>
                 </div>
                 <div class="result-item">
                     <div class="label">Memory Efficiency</div>
-                    <div class="value" id="card-ram">45.4 MiB</div>
+                    <div class="value" id="card-ram">&mdash;</div>
                     <div class="improvement">Idle RAM per Pair</div>
-                    <div class="timestamp" id="card-ram-sub">measured: 17.9 + 27.6</div>
+                    <div class="timestamp" id="card-ram-sub">&mdash;</div>
                 </div>
                 <div class="result-item">
                     <div class="label">Concurrent Sessions</div>
-                    <div class="value" id="card-conc">1.7×</div>
-                    <div class="improvement">Concurrent Sessions (37 → 62)</div>
-                    <div class="timestamp">measured both sides</div>
+                    <div class="value" id="card-conc">&mdash;</div>
+                    <div class="improvement">Concurrent Sessions</div>
+                    <div class="timestamp">recorded baseline (both sides, same host)</div>
                 </div>
                 <div class="result-item">
                     <div class="label">Overall Improvement</div>
-                    <div class="value" id="card-att-red">90.6%</div>
+                    <div class="value" id="card-att-red">&mdash;</div>
                     <div class="improvement">Attacker Size Reduction</div>
-                    <div class="timestamp">342 MiB vs 3650 MiB, both measured</div>
+                    <div class="timestamp" id="card-att-red-sub">both sides measured on host</div>
                 </div>
             </div>
 
@@ -379,6 +384,16 @@
                     if (bm.concurrency) {
                         document.getElementById('card-conc').textContent = bm.concurrency.ratio + '×';
                     }
+                    if (typeof bm.cold_start_s === 'number') {
+                        document.getElementById('card-coldstart').textContent = bm.cold_start_s + ' s';
+                    }
+                    // provenance: LIVE carries generated_at, BASELINE is the frozen record
+                    const isLive = bm.source === 'live';
+                    document.getElementById('bm-badge-text').textContent =
+                        (isLive ? 'LIVE — measured ' + bm.generated_at : 'BASELINE — recorded ' + (bm.date || '2026-10-01'));
+                    document.getElementById('bm-generated-at').textContent = isLive
+                        ? (bm.protocol || '') + ' · optimized columns live; images/concurrency from the recorded baseline'
+                        : 'no live measurement on disk — POST /benchmarks/run or ./benchmark/run.sh live to measure now';
                 }
             } catch (_) {}
         }

@@ -107,6 +107,45 @@
         }
         .success { color: var(--black); font-weight: bold; }
         .error { color: var(--grey-500); font-style: italic; }
+        /* ---- benchmark provenance (LIVE vs BASELINE) ---- */
+        .provenance {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+            margin: 15px 0 5px 0;
+            padding: 12px;
+            border: 1px solid var(--black);
+            background: var(--grey-050);
+        }
+        .badge {
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            padding: 5px 10px;
+            border: 1px solid var(--black);
+            color: var(--white);
+            background: var(--black);
+        }
+        .badge.live { background: var(--black); color: var(--white); }
+        .badge.baseline { background: var(--white); color: var(--black); }
+        .badge.none { background: var(--grey-300); color: var(--white); border-color: var(--grey-300); }
+        .provenance-text { font-size: 12px; color: var(--grey-700); line-height: 1.5; }
+        .provenance-text code { font-family: monospace; }
+        /* every metric carries the timestamp of the artifact it came from */
+        .metric-ts {
+            display: block;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: var(--grey-500);
+            margin-top: 4px;
+        }
+        .metric.live .metric-value { border-bottom: 3px solid var(--black); }
+        .benchmark-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
+        .benchmark-actions .button { padding: 10px 18px; font-size: 13px; }
+        .benchmark-log { margin-top: 10px; }
         .comparison-table {
             margin: 20px 0;
             overflow-x: auto;
@@ -174,6 +213,18 @@
                 
                 <h3 style="color: #000000; margin: 20px 0 15px 0;"> Before vs After Comparison</h3>
                 
+                <div class="provenance" id="bm-provenance">
+                    <span class="badge none" id="bm-badge">loading</span>
+                    <span class="provenance-text" id="bm-provenance-text">
+                        Reading benchmark provenance from <code>GET /benchmarks</code>&hellip;
+                    </span>
+                </div>
+                <div class="benchmark-actions">
+                    <button class="button" id="bm-rerun-btn" onclick="rerunBenchmark()">Re-run benchmark</button>
+                    <span class="provenance-text" id="bm-run-state">no run in this session</span>
+                </div>
+                <div class="output benchmark-log" id="bm-log"></div>
+
                 <div class="comparison-table">
                     <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
                         <thead>
@@ -187,33 +238,33 @@
                         <tbody>
                             <tr style="background: #f5f5f5;">
                                 <td style="padding: 12px; border-bottom: 1px solid #999999;">Attacker Image Size<br><span style="font-size:11px;color:#666666;">both built and measured on host</span></td>
-                                <td id="bm-att-legacy" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">3650 MiB</td>
-                                <td id="bm-att-opt" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">342 MiB</td>
-                                <td id="bm-att-pct" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #000000; font-weight: bold;">90.6% ↓</td>
+                                <td class="bm-cell" data-metric="images" id="bm-att-legacy" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">&mdash;</td>
+                                <td class="bm-cell" data-metric="images" id="bm-att-opt" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">&mdash;</td>
+                                <td class="bm-cell" data-metric="image_reduction_pct" id="bm-att-pct" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #000000; font-weight: bold;">&mdash;</td>
                             </tr>
                             <tr>
                                 <td style="padding: 12px; border-bottom: 1px solid #999999;">Target Image Size<br><span style="font-size:11px;color:#666666;">both built and measured on host</span></td>
-                                <td id="bm-tgt-legacy" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">955 MiB</td>
-                                <td id="bm-tgt-opt" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">275 MiB</td>
-                                <td id="bm-tgt-pct" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #000000; font-weight: bold;">71.2% ↓</td>
+                                <td class="bm-cell" data-metric="images" id="bm-tgt-legacy" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">&mdash;</td>
+                                <td class="bm-cell" data-metric="images" id="bm-tgt-opt" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">&mdash;</td>
+                                <td class="bm-cell" data-metric="image_reduction_pct" id="bm-tgt-pct" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #000000; font-weight: bold;">&mdash;</td>
                             </tr>
                             <tr style="background: #f5f5f5;">
-                                <td style="padding: 12px; border-bottom: 1px solid #999999;">Cold Start (to healthy)<br><span style="font-size:11px;color:#666666;">optimized measured; legacy declares no HEALTHCHECK</span></td>
-                                <td style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">not measurable</td>
-                                <td style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">4.4 s</td>
-                                <td style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #666666;">n/a</td>
+                                <td style="padding: 12px; border-bottom: 1px solid #999999;">Cold Start (to healthy)<br><span style="font-size:11px;color:#666666;">provision &rarr; both healthchecks green</span></td>
+                                <td class="bm-cell" data-metric="idle_footprint_mib" id="bm-coldstart-legacy" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">n/a &mdash; legacy images declare no HEALTHCHECK, so there is no readiness signal to time</td>
+                                <td class="bm-cell" data-metric="cold_start" id="bm-coldstart-opt" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">&mdash;</td>
+                                <td class="bm-cell" data-metric="cold_start" id="bm-coldstart-pct" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #666666;">n/a</td>
                             </tr>
                             <tr>
-                                <td style="padding: 12px; border-bottom: 1px solid #999999;">Idle RAM per pair<br><span style="font-size:11px;color:#666666;">measured: 17.9 attacker + 27.6 target</span></td>
-                                <td id="bm-ram-legacy" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">446.5 MiB</td>
-                                <td id="bm-ram-opt" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">45.4 MiB</td>
-                                <td id="bm-ram-pct" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #000000; font-weight: bold;">89.8% ↓</td>
+                                <td style="padding: 12px; border-bottom: 1px solid #999999;">Idle RAM per pair<br><span id="bm-ram-split" style="font-size:11px;color:#666666;">attacker + target</span> · <span id="bm-procs">procs —</span></td>
+                                <td class="bm-cell" data-metric="idle_footprint_mib" id="bm-ram-legacy" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">&mdash;</td>
+                                <td class="bm-cell" data-metric="idle_footprint_mib" id="bm-ram-opt" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">&mdash;</td>
+                                <td class="bm-cell" data-metric="pair_reduction_pct" id="bm-ram-pct" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #000000; font-weight: bold;">&mdash;</td>
                             </tr>
                             <tr style="background: #f5f5f5;">
-                                <td style="padding: 12px; border-bottom: 1px solid #999999;">Max pairs (8 GB host)<br><span style="font-size:11px;color:#666666;">measured both sides on this host</span></td>
-                                <td id="bm-conc-legacy" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">37 pairs</td>
-                                <td id="bm-conc-opt" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">62 pairs</td>
-                                <td id="bm-conc-ratio" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #000000; font-weight: bold;">1.7× ↑</td>
+                                <td style="padding: 12px; border-bottom: 1px solid #999999;">Max pairs (host capacity)<br><span style="font-size:11px;color:#666666;">recorded ramp &mdash; not re-measured per run</span></td>
+                                <td class="bm-cell" data-metric="concurrency" id="bm-conc-legacy" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">&mdash;</td>
+                                <td class="bm-cell" data-metric="concurrency" id="bm-conc-opt" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999;">&mdash;</td>
+                                <td class="bm-cell" data-metric="concurrency" id="bm-conc-ratio" style="padding: 12px; text-align: right; border-bottom: 1px solid #999999; color: #000000; font-weight: bold;">&mdash;</td>
                             </tr>
                         </tbody>
                     </table>
@@ -221,37 +272,51 @@
 
                 <h3 style="color: #000000; margin: 20px 0 15px 0;"> Key Achievements</h3>
                 <div class="metric-grid">
-                    <div class="metric">
-                        <div class="metric-value" id="card-att-size">342 MiB</div>
-                        <div class="metric-label">Attacker Image (measured)</div>
+                    <div class="metric bm-card" data-metric="images">
+                        <div class="metric-value" id="card-att-size">&mdash;</div>
+                        <div class="metric-label">Attacker Image</div>
+                        <span class="metric-ts" id="card-att-size-ts"></span>
                     </div>
-                    <div class="metric">
-                        <div class="metric-value" id="card-tgt-size">275 MiB</div>
-                        <div class="metric-label">Target Image (measured)</div>
+                    <div class="metric bm-card" data-metric="images">
+                        <div class="metric-value" id="card-tgt-size">&mdash;</div>
+                        <div class="metric-label">Target Image</div>
+                        <span class="metric-ts" id="card-tgt-size-ts"></span>
                     </div>
-                    <div class="metric">
-                        <div class="metric-value" id="card-att-red">90.6%</div>
+                    <div class="metric bm-card" data-metric="image_reduction_pct">
+                        <div class="metric-value" id="card-att-red">&mdash;</div>
                         <div class="metric-label">Attacker Size Reduction</div>
+                        <span class="metric-ts" id="card-att-red-ts"></span>
                     </div>
-                    <div class="metric">
-                        <div class="metric-value" id="card-tgt-red">71.2%</div>
+                    <div class="metric bm-card" data-metric="image_reduction_pct">
+                        <div class="metric-value" id="card-tgt-red">&mdash;</div>
                         <div class="metric-label">Target Size Reduction</div>
+                        <span class="metric-ts" id="card-tgt-red-ts"></span>
                     </div>
-                    <div class="metric">
-                        <div class="metric-value">4.4 s</div>
+                    <div class="metric bm-card" data-metric="cold_start">
+                        <div class="metric-value" id="card-coldstart">&mdash;</div>
                         <div class="metric-label">Cold Start to Healthy</div>
+                        <span class="metric-ts" id="card-coldstart-ts"></span>
                     </div>
-                    <div class="metric">
-                        <div class="metric-value" id="card-ram">45.4 MiB</div>
+                    <div class="metric bm-card" data-metric="idle_footprint_mib">
+                        <div class="metric-value" id="card-ram">&mdash;</div>
                         <div class="metric-label">Idle RAM per Pair</div>
+                        <span class="metric-ts" id="card-ram-ts"></span>
                     </div>
-                    <div class="metric">
-                        <div class="metric-value" id="card-conc">1.7×</div>
-                        <div class="metric-label">Concurrent Sessions (37 → 62)</div>
+                    <div class="metric bm-card" data-metric="concurrency">
+                        <div class="metric-value" id="card-conc">&mdash;</div>
+                        <div class="metric-label">Concurrent Sessions</div>
+                        <span class="metric-ts" id="card-conc-ts"></span>
                     </div>
                 </div>
                 <p style="font-size:12px;color:#666666;margin-top:15px;" id="bm-source-note">
-                    Data source: live API (/benchmarks) & docs/before-after-measurements.json.
+                    No benchmark data loaded yet.
+                </p>
+                <p style="font-size:12px;color:#666666;">
+                    <strong>Provenance rule:</strong> a number tagged <strong>LIVE</strong> was measured by
+                    <code>benchmark/measure-live.sh</code> on this host and always shows its
+                    <code>generated_at</code>. A number tagged <strong>BASELINE</strong> comes from the
+                    recorded 2026-10-01 artifact <code>docs/before-after-measurements.json</code> and can
+                    never be re-dated. Delete <code>benchmark/live/latest.json</code> to fall back.
                 </p>
             </div>
         </div>
@@ -259,50 +324,182 @@
 
     <script>
         const API_URL = 'http://localhost:8080';
-        
+        const BM_POLL_MS = 2000;
+        let bmPollTimer = null;
+
+        // ---- provenance helpers -------------------------------------------------
+        // Every number rendered below carries the tag of the artifact it came from:
+        // LIVE (measured now, carries generated_at) or BASELINE (recorded 2026-10-01).
+        function bmBadge(source) {
+            // a derived figure (live optimized vs recorded legacy) is labelled as both
+            if (source === 'live-vs-recorded-baseline') return { cls: 'live', label: 'LIVE vs BASELINE' };
+            if (typeof source === 'string' && source.indexOf('live') === 0) return { cls: 'live', label: 'LIVE' };
+            if (source === 'recorded-baseline') return { cls: 'baseline', label: 'BASELINE' };
+            return { cls: 'none', label: 'NO DATA' };
+        }
+        function bmStamp(el, source, measuredAt) {
+            if (!el) return;
+            const b = bmBadge(source);
+            el.classList.toggle('live', b.cls === 'live');
+            let ts = el.querySelector('.metric-ts');
+            if (!ts) { ts = document.createElement('span'); ts.className = 'metric-ts'; el.appendChild(ts); }
+            let when = 'no artifact';
+            if (source === 'live-vs-recorded-baseline') when = `${measuredAt || 'live run'} vs recorded legacy`;
+            else if (b.cls === 'live') when = measuredAt || 'generated_at missing';
+            else if (b.cls === 'baseline') when = 'recorded 2026-10-01';
+            ts.textContent = `${b.label} · ${when}`;
+        }
+        function bmText(id, value) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value;
+        }
+        function bmLog(msg) {
+            const log = document.getElementById('bm-log');
+            if (!log) return;
+            log.style.display = 'block';
+            log.textContent += msg + '\n';
+        }
+
         async function fetchBenchmarks() {
+            let bm;
             try {
                 const res = await fetch(`${API_URL}/benchmarks`);
-                if (res.ok) {
-                    const bm = await res.json();
-                    if (bm.images) {
-                        if (bm.images.legacy_attacker) document.getElementById('bm-att-legacy').textContent = bm.images.legacy_attacker.size_mib + ' MiB';
-                        if (bm.images.opt_attacker) {
-                            document.getElementById('bm-att-opt').textContent = bm.images.opt_attacker.size_mib + ' MiB';
-                            document.getElementById('card-att-size').textContent = bm.images.opt_attacker.size_mib + ' MiB';
-                        }
-                        if (bm.images.legacy_target) document.getElementById('bm-tgt-legacy').textContent = bm.images.legacy_target.size_mib + ' MiB';
-                        if (bm.images.opt_target) {
-                            document.getElementById('bm-tgt-opt').textContent = bm.images.opt_target.size_mib + ' MiB';
-                            document.getElementById('card-tgt-size').textContent = bm.images.opt_target.size_mib + ' MiB';
-                        }
-                    }
-                    if (bm.image_reduction_pct) {
-                        document.getElementById('bm-att-pct').textContent = bm.image_reduction_pct.attacker + '% ↓';
-                        document.getElementById('card-att-red').textContent = bm.image_reduction_pct.attacker + '%';
-                        document.getElementById('bm-tgt-pct').textContent = bm.image_reduction_pct.target + '% ↓';
-                        document.getElementById('card-tgt-red').textContent = bm.image_reduction_pct.target + '%';
-                    }
-                    if (bm.idle_footprint_mib) {
-                        document.getElementById('bm-ram-legacy').textContent = bm.idle_footprint_mib.legacy.pair_total + ' MiB';
-                        document.getElementById('bm-ram-opt').textContent = bm.idle_footprint_mib.optimized.pair_total + ' MiB';
-                        document.getElementById('card-ram').textContent = bm.idle_footprint_mib.optimized.pair_total + ' MiB';
-                        document.getElementById('bm-ram-pct').textContent = bm.idle_footprint_mib.pair_reduction_pct + '% ↓';
-                    }
-                    if (bm.concurrency) {
-                        document.getElementById('bm-conc-legacy').textContent = bm.concurrency.legacy_max_stable_pairs + ' pairs';
-                        document.getElementById('bm-conc-opt').textContent = bm.concurrency.optimized_max_stable_pairs + ' pairs';
-                        document.getElementById('bm-conc-ratio').textContent = bm.concurrency.ratio + '× ↑';
-                        document.getElementById('card-conc').textContent = bm.concurrency.ratio + '×';
-                    }
-                    const note = document.getElementById('bm-source-note');
-                    if (note && bm.host) {
-                        note.textContent = `Measured on ${bm.host.vcpu} vCPU / ${bm.host.ram_gib} GiB host (${bm.date}). Source: ${bm.source}`;
-                    }
+                bm = await res.json();
+            } catch (e) {
+                console.log('Using recorded baseline cache (API benchmarks offline)');
+                bmText('bm-source-note', 'API unreachable — showing the recorded 2026-10-01 baseline from the last payload.');
+                return;
+            }
+
+            if (!bm || bm.available === false) {
+                const badge = document.getElementById('bm-badge');
+                badge.className = 'badge none';
+                badge.textContent = 'NO DATA';
+                bmText('bm-provenance-text', 'Neither benchmark/live/latest.json nor docs/before-after-measurements.json is present. Run a measurement: POST /benchmarks/run');
+                bmText('bm-source-note', 'No benchmark artifact available — nothing is displayed, because an unattributed number must never be rendered.');
+                document.querySelectorAll('.bm-cell, .bm-card').forEach((el) => bmStamp(el, null, null));
+                return;
+            }
+
+            // ---- headline badge + provenance line -------------------------------
+            const isLive = bm.source === 'live';
+            const badge = document.getElementById('bm-badge');
+            badge.className = 'badge ' + (isLive ? 'live' : 'baseline');
+            badge.textContent = isLive ? 'LIVE' : 'BASELINE';
+            const measuredAt = bm.generated_at || bm.date;
+            const host = bm.host ? `${bm.host.vcpu} vCPU / ${bm.host.ram_gib} GiB` : 'host unknown';
+            bmText('bm-provenance-text', isLive
+                ? `Measured ${measuredAt} on ${host} · ${bm.protocol || 'protocol unavailable'} · source: ${bm.live_file}`
+                : `Recorded baseline ${measuredAt} on ${host} · ${bm.protocol || ''} · source: ${bm.recorded_file}`);
+
+            // ---- values ---------------------------------------------------------
+            const imgs = bm.images || {};
+            if (imgs.legacy_attacker) bmText('bm-att-legacy', `${imgs.legacy_attacker.size_mib} MiB`);
+            if (imgs.opt_attacker) {
+                bmText('bm-att-opt', `${imgs.opt_attacker.size_mib} MiB`);
+                bmText('card-att-size', `${imgs.opt_attacker.size_mib} MiB`);
+            }
+            if (imgs.legacy_target) bmText('bm-tgt-legacy', `${imgs.legacy_target.size_mib} MiB`);
+            if (imgs.opt_target) {
+                bmText('bm-tgt-opt', `${imgs.opt_target.size_mib} MiB`);
+                bmText('card-tgt-size', `${imgs.opt_target.size_mib} MiB`);
+            }
+            const red = bm.image_reduction_pct || {};
+            if (red.attacker !== undefined) {
+                bmText('bm-att-pct', `${red.attacker}% ↓`);
+                bmText('card-att-red', `${red.attacker}%`);
+            }
+            if (red.target !== undefined) {
+                bmText('bm-tgt-pct', `${red.target}% ↓`);
+                bmText('card-tgt-red', `${red.target}%`);
+            }
+            const idle = bm.idle_footprint_mib || {};
+            if (idle.optimized) {
+                bmText('bm-ram-opt', `${idle.optimized.pair_total} MiB`);
+                bmText('card-ram', `${idle.optimized.pair_total} MiB`);
+                bmText('bm-ram-split', `attacker ${idle.optimized.attacker} + target ${idle.optimized.target} MiB`);
+                if (idle.optimized.procs_total !== undefined) {
+                    bmText('bm-procs', `${idle.optimized.procs_total} procs (${idle.optimized.procs_attacker} att + ${idle.optimized.procs_target} tgt)`);
+                }
+            }
+            if (idle.legacy) bmText('bm-ram-legacy', `${idle.legacy.pair_total} MiB`);
+            if (idle.pair_reduction_pct !== undefined) bmText('bm-ram-pct', `${idle.pair_reduction_pct}% ↓`);
+            if (typeof bm.cold_start_s === 'number') {
+                bmText('bm-coldstart-opt', `${bm.cold_start_s} s`);
+                bmText('card-coldstart', `${bm.cold_start_s} s`);
+            }
+            const conc = bm.concurrency || {};
+            if (conc.legacy_max_stable_pairs !== undefined) {
+                bmText('bm-conc-legacy', `${conc.legacy_max_stable_pairs} pairs`);
+                bmText('bm-conc-opt', `${conc.optimized_max_stable_pairs} pairs`);
+                bmText('bm-conc-ratio', `${conc.ratio}× ↑`);
+                bmText('card-conc', `${conc.ratio}×`);
+            }
+            const warnings = (bm.warnings || []).join(' ');
+            bmText('bm-source-note', isLive
+                ? `Optimized columns: LIVE measurement ${measuredAt}. Legacy columns, image sizes and concurrency: RECORDED baseline 2026-10-01 (not re-measured per run). ${warnings}`
+                : `No live measurement on disk — every figure below is the RECORDED 2026-10-01 baseline. ${warnings}`);
+
+            // ---- per-metric provenance stamps (LAST: appending a stamp after the
+            //      value is written keeps it — setting textContent wipes children) --
+            document.querySelectorAll('.bm-cell, .bm-card').forEach((el) => {
+                bmStamp(el, (bm.metric_source || {})[el.dataset.metric] || bm.source, measuredAt);
+            });
+        }
+
+        // ---- Re-run benchmark: POST /benchmarks/run + poll /benchmarks/status ---
+        async function rerunBenchmark() {
+            const btn = document.getElementById('bm-rerun-btn');
+            btn.disabled = true;
+            bmLog('POST /benchmarks/run ...');
+            try {
+                const res = await fetch(`${API_URL}/benchmarks/run`, { method: 'POST' });
+                const data = await res.json();
+                if (res.status === 409) {
+                    bmLog(`A run is already in progress (job ${data.job_id || 'unknown'}) — attaching to it.`);
+                } else if (!res.ok) {
+                    bmLog(`Could not start a run: ${res.status} ${data.error || ''}`);
+                    btn.disabled = false;
+                    return;
+                } else {
+                    bmLog(`Run accepted: job ${data.job_id} (${data.protocol ? data.protocol.settle_s + 's settle, ' + data.protocol.samples + ' samples every ' + data.protocol.interval_s + 's' : 'protocol from lifecycle.env'})`);
                 }
             } catch (e) {
-                console.log('Using baseline measurements cache (API benchmarks offline)');
+                bmLog(`Could not reach the API: ${e.message}`);
+                btn.disabled = false;
+                return;
             }
+            bmPollForRun();
+        }
+
+        function bmPollForRun() {
+            const btn = document.getElementById('bm-rerun-btn');
+            if (bmPollTimer) clearTimeout(bmPollTimer);
+            bmPollTimer = setTimeout(async () => {
+                let st;
+                try {
+                    const res = await fetch(`${API_URL}/benchmarks/status`);
+                    st = await res.json();
+                } catch (e) {
+                    bmLog('Lost contact with /benchmarks/status — retrying.');
+                    bmPollTimer = setTimeout(bmPollForRun, BM_POLL_MS * 2);
+                    return;
+                }
+                if (st.running) {
+                    bmText('bm-run-state', `measuring — started ${st.started_at || 'unknown time'}`);
+                    bmPollTimer = setTimeout(bmPollForRun, BM_POLL_MS);
+                    return;
+                }
+                btn.disabled = false;
+                if (st.error) {
+                    bmText('bm-run-state', `last run failed: ${st.error.split('\n').pop()}`);
+                    bmLog(`Run failed: ${st.error}`);
+                    return;
+                }
+                bmText('bm-run-state', `last completed run: ${st.last_run_at || 'unknown'}`);
+                bmLog('Run complete — refreshing benchmark data.');
+                await fetchBenchmarks();
+            }, BM_POLL_MS);
         }
 
         async function checkStatus() {

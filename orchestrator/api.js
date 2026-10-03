@@ -6,6 +6,9 @@
 //   DELETE /sessions/:id                           -> teardown (FR-08)
 //   GET  /sessions                               -> list ids
 //   GET  /sessions/:id/events                    -> reaper warning/audit events (FR-10)
+//   GET  /benchmarks                             -> live-measured metrics, else recorded baseline
+//   POST /benchmarks/run                         -> measure a fresh pair now (202 {job_id})
+//   GET  /benchmarks/status                      -> {running, last_run_at, error?}
 //   GET  /health                                 -> liveness
 //
 // Provisioning delegates to orchestrator/provision.sh so the docker-run flag
@@ -20,7 +23,7 @@
 // platform orchestrator repo absorbs this file (PRD §10.1).
 'use strict';
 
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('http');
@@ -28,11 +31,14 @@ const { Router, json } = require('./lib/http_shim');
 
 // ORCH_HOME lets integration tests sandbox the orchestrator dir (fake
 // provision.sh + fake docker on PATH) without touching this repo copy.
-//   ORCH_HOME — dir holding limits.env/lifecycle.env/provision.sh (default: this dir)
+//   ORCH_HOME     — dir holding limits.env/lifecycle.env/provision.sh (default: this dir)
 //   PROVISION_BIN — provisioning entrypoint invoked by POST /sessions
+//   MEASURE_BIN   — live benchmark script invoked by POST /benchmarks/run
+//   BENCH_LIVE_FILE / BENCH_RECORDED_FILE — benchmark artifacts (default: under ROOT)
 const HERE = process.env.ORCH_HOME || __dirname;
 const ROOT = path.dirname(HERE);
 const PROVISION_BIN = process.env.PROVISION_BIN || path.join(HERE, 'provision.sh');
+const MEASURE_BIN = process.env.MEASURE_BIN || path.join(ROOT, 'benchmark', 'measure-live.sh');
 
 // ---- config (SSoT files, never hardcoded values) ---------------------------
 function readEnvFile(p) {
@@ -49,6 +55,20 @@ const STATE_DIR = process.env.STATE_DIR || path.join(HERE, '.state');
 const WARN_LOG = process.env.WARN_LOG || path.join(STATE_DIR, 'warnings.log');
 const KNOWN_BUNDLES = ['web-exploitation', 'network-recon', 'password-attacks'];
 
+// Benchmark artifacts. LIVE is written by benchmark/measure-live.sh; RECORDED is the
+// audited 2026-10-01 Phase-5 baseline and is the fallback. BENCH_PROTOCOL is surfaced
+// in /benchmarks/status so the dashboard can describe a run without hardcoding numbers.
+const BENCH_LIVE_FILE = process.env.BENCH_LIVE_FILE || path.join(ROOT, 'benchmark', 'live', 'latest.json');
+const BENCH_RECORDED_FILE = process.env.BENCH_RECORDED_FILE || path.join(ROOT, 'docs', 'before-after-measurements.json');
+const BENCH_STATUS_FILE = path.join(STATE_DIR, 'benchmarks-status.json');
+const BENCH_LOG = path.join(STATE_DIR, 'benchmarks-run.log');
+const BENCH_PROTOCOL = {
+  settle_s: +(LIFECYCLE.BENCH_SETTLE_S || 0),
+  samples: +(LIFECYCLE.BENCH_SAMPLES || 0),
+  interval_s: +(LIFECYCLE.BENCH_SAMPLE_INTERVAL_S || 0),
+  script: path.relative(ROOT, MEASURE_BIN) || MEASURE_BIN,
+};
+
 // 90s cap: never let a wedged provisioning call hang the API (healthcheck wait is 30s max)
 // options overload (e.g. { env }) is supported for callers that must adjust
 // the child environment; execFile merges nothing by default, so pass full env.
@@ -62,27 +82,172 @@ const app = Router();
 
 app.get('/health', (_req, res) => res.json({ ok: true, phase: 3 }));
 
-// GET /benchmarks — serve measured before/after data from the canonical JSON
-// so demo UIs never hardcode metrics. Source of truth: docs/before-after-measurements.json
-app.get('/benchmarks', (_req, res) => {
-  const measPath = path.join(ROOT, 'docs', 'before-after-measurements.json');
-  try {
-    const raw = fs.readFileSync(measPath, 'utf8');
-    const data = JSON.parse(raw);
-    // Return a UI-friendly subset
-    res.json({
-      source: 'docs/before-after-measurements.json',
-      date: data.date,
-      host: data.host,
-      images: data.images,
-      idle_footprint_mib: data.idle_footprint_mib,
-      image_reduction_pct: data.image_reduction_pct,
-      concurrency: data.concurrency,
-      caveats: data.caveats,
-    });
-  } catch (e) {
-    res.status(503).json({ error: 'benchmark data not available', detail: e.message });
+// ---- benchmarks: prefer a live measurement, fall back to the recorded baseline ---
+//
+// Provenance rule (enforced here so no UI can invent it): every number this endpoint
+// returns carries a `source` tag. 'live' = measured by benchmark/measure-live.sh and
+// stamped with its generated_at; 'recorded-baseline' = the frozen, audited 2026-10-01
+// artifact docs/before-after-measurements.json, which can never claim to be live.
+// `metric_source` names the tag per metric group so a dashboard can badge each cell.
+// NO number is hardcoded in this response path — everything is read from a file.
+const LIVE = 'live';
+const RECORDED = 'recorded-baseline';
+
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+// measured optimized-pair block, normalised to the shape the recorded file uses so a
+// live run can replace it in place (demo.html/demo-webpage.html read .optimized.*).
+// Keys with no measured value are DROPPED rather than written as null, so a partial
+// live artifact can never blank out a recorded figure it does not actually cover.
+function liveOptimizedBlock(live) {
+  const f = live.idle_footprint_mib || {};
+  const out = {};
+  for (const k of ['attacker', 'target', 'pair_total', 'procs_attacker', 'procs_target', 'procs_total']) {
+    if (typeof f[k] === 'number' && Number.isFinite(f[k])) out[k] = f[k];
   }
+  return out;
+}
+
+function mergeBenchmarks(live, recorded, livePath, recordedPath) {
+  const warnings = [];
+  if (!live && !recorded) {
+    // Neither artifact exists (fresh clone, or someone deleted benchmark/live/latest.json).
+    // This is NOT an error: the dashboards render a "no data" state instead of a 503.
+    return { available: false, source: null, metric_source: {}, warnings, live_file: livePath, recorded_file: recordedPath };
+  }
+  const rec = recorded || {};
+  const out = {
+    available: true,
+    source: live ? LIVE : RECORDED,
+    host: live ? live.host : rec.host,
+    protocol: live ? live.protocol : rec.protocol,
+    caveats: rec.caveats || [],
+    images: rec.images,
+    image_reduction_pct: rec.image_reduction_pct,
+    concurrency: rec.concurrency,
+    // recorded-baseline never has a generated_at; its date is the measurement day
+    date: live ? (live.generated_at || '').slice(0, 10) : rec.date,
+    metric_source: {
+      idle_footprint_mib: live ? LIVE : RECORDED,
+      images: RECORDED, image_reduction_pct: RECORDED, concurrency: RECORDED,
+      host: live ? LIVE : RECORDED,
+    },
+    live_file: livePath, recorded_file: recordedPath,
+  };
+  if (rec.idle_footprint_mib) out.idle_footprint_mib = { ...rec.idle_footprint_mib };
+  if (live) {
+    const opt = liveOptimizedBlock(live);
+    out.idle_footprint_mib = { ...(out.idle_footprint_mib || {}), optimized: { ...(out.idle_footprint_mib?.optimized || {}), ...opt } };
+    out.generated_at = live.generated_at || null;      // LIVE numbers always carry this
+    out.session_id = live.session_id;
+    out.samples = live.samples;                        // raw per-sample values, as measured
+    if (typeof live.cold_start_s === 'number') {
+      out.cold_start_s = live.cold_start_s;            // provision -> both healthchecks green
+      out.metric_source.cold_start = LIVE;
+    }
+    const legacyTotal = out.idle_footprint_mib?.legacy?.pair_total;
+    if (typeof legacyTotal === 'number' && typeof opt.pair_total === 'number' && legacyTotal > 0) {
+      // derived, not stored: live optimized vs the RECORDED legacy figure it is
+      // compared against — both figures stay individually attributable.
+      out.idle_footprint_mib.pair_reduction_pct =
+        Number((((legacyTotal - opt.pair_total) / legacyTotal) * 100).toFixed(1));
+      out.metric_source.pair_reduction_pct = `${LIVE}-vs-${RECORDED}`;
+    }
+    if (live.dry_run) {
+      warnings.push('live artifact is tagged dry_run — treat as a script self-test, not a measurement');
+    }
+  } else {
+    warnings.push('no live measurement on disk — showing the recorded 2026-10-01 baseline (POST /benchmarks/run to measure now)');
+    out.recorded = { source: RECORDED, date: rec.date, provenance: rec.provenance, protocol: rec.protocol };
+  }
+  out.baseline = { source: RECORDED, file: recordedPath, date: rec.date || null, available: !!recorded };
+  if (!recorded) warnings.push('recorded baseline docs/before-after-measurements.json is missing — legacy columns unavailable');
+  out.warnings = warnings;
+  return out;
+}
+
+app.get('/benchmarks', (_req, res) => {
+  const live = readJson(BENCH_LIVE_FILE);
+  const recorded = readJson(BENCH_RECORDED_FILE);
+  res.json(mergeBenchmarks(live, recorded, BENCH_LIVE_FILE, BENCH_RECORDED_FILE));
+});
+
+// ---- POST /benchmarks/run — spawn a fresh measurement, detached ---------------
+// The run takes minutes (settle + N samples at I seconds) and provisions a real pair,
+// so it must not hold the request open: 202 + job_id now, /benchmarks/status for
+// progress. One job at a time — two concurrent measurements would provision two pairs
+// under the same session id and race for benchmark/live/latest.json.
+const BENCH_TAIL_BYTES = 800;
+function readBenchStatus() {
+  const st = readJson(BENCH_STATUS_FILE) || {};
+  const running = !!st.running && pidAlive(st.pid);
+  // A crash between spawn and the exit handler (API restart, kill -9) would otherwise
+  // leave `running` stuck true forever and block every later run with a 409.
+  return running ? { ...st, running: true } : { ...st, running: false, pid: running ? st.pid : null };
+}
+function writeBenchStatus(st) {
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  const tmp = `${BENCH_STATUS_FILE}.tmp`;             // atomic swap: a reader never sees a partial status
+  fs.writeFileSync(tmp, JSON.stringify(st, null, 2));
+  fs.renameSync(tmp, BENCH_STATUS_FILE);
+}
+function pidAlive(pid) {
+  if (!pid || typeof pid !== 'number') return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e.code === 'EPERM'; }
+}
+function benchErrorTail() {
+  try { return fs.readFileSync(BENCH_LOG, 'utf8').slice(-BENCH_TAIL_BYTES).trim(); }
+  catch { return null; }
+}
+
+app.post('/benchmarks/run', (_req, res) => {
+  const cur = readBenchStatus();
+  if (cur.running) {
+    return res.status(409).json({
+      error: 'benchmark run already in progress', job_id: cur.job_id || null,
+      started_at: cur.started_at || null,
+    });
+  }
+  if (!fs.existsSync(MEASURE_BIN)) {
+    return res.status(500).json({ error: 'measure-live.sh not found', path: MEASURE_BIN });
+  }
+  const jobId = `bm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  try { fs.writeFileSync(BENCH_LOG, ''); } catch {}
+  const logFd = fs.openSync(BENCH_LOG, 'a');
+  const child = spawn(MEASURE_BIN, [], {
+    cwd: ROOT, detached: true, stdio: ['ignore', logFd, logFd],
+    env: { ...process.env, STATE_DIR },
+  });
+  child.unref();   // the API must survive the measurement (and its restart) outliving it
+  try { fs.closeSync(logFd); } catch {}   // the child holds its own copy; don't leak ours
+  const started_at = new Date().toISOString();
+  writeBenchStatus({ running: true, pid: child.pid, job_id: jobId, started_at, last_run_at: cur.last_run_at || null, error: null });
+  const finish = (code, how) => {
+    const ok = code === 0;
+    writeBenchStatus({
+      running: false, pid: null, job_id: jobId, started_at,
+      last_run_at: new Date().toISOString(), error: ok ? null : `measure-live.sh ${how} (exit ${code}): ${benchErrorTail() || 'no output'}`,
+    });
+  };
+  child.on('exit', (code, signal) => finish(code, signal ? `killed by ${signal}` : 'failed'));
+  child.on('error', (e) => {
+    writeBenchStatus({ running: false, pid: null, job_id: jobId, started_at,
+      last_run_at: new Date().toISOString(), error: `spawn failed: ${e.message}` });
+  });
+  res.status(202).json({ job_id: jobId, started_at, status_url: '/benchmarks/status', protocol: BENCH_PROTOCOL });
+});
+
+app.get('/benchmarks/status', (_req, res) => {
+  const st = readBenchStatus();
+  res.json({
+    running: st.running, last_run_at: st.last_run_at || null, error: st.error || undefined,
+    job_id: st.job_id || null, started_at: st.started_at || null,
+    live_file: BENCH_LIVE_FILE, protocol: BENCH_PROTOCOL,
+  });
 });
 
 // POST /sessions  {bundle, id, ssh?}  — create (FR-08)
@@ -222,4 +387,4 @@ if (require.main === module) {
   server.listen(PORT, HOST, () =>
     console.log(`lifecycle API on ${HOST}:${PORT} (phase 3, FR-08)`));
 }
-module.exports = { app, PORT, STATE_DIR, WARN_LOG, KNOWN_BUNDLES };
+module.exports = { app, PORT, STATE_DIR, WARN_LOG, KNOWN_BUNDLES, mergeBenchmarks, MEASURE_BIN, BENCH_LIVE_FILE, BENCH_RECORDED_FILE, BENCH_STATUS_FILE, BENCH_PROTOCOL };
