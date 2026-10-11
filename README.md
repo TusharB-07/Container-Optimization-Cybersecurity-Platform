@@ -16,22 +16,22 @@ graph TD
     end
 
     %% Core Services
-    API[(Orchestrator API\nNode.js + http_shim)\nPort 8080]:::api
-    PROV[Provisioning Script\nbash - orchestrator/provision.sh]:::script
-    BENCH[Benchmark Harness\nbash + Node]:::script
+    API[(Orchestrator API\nNode.js + http_shim)\nPort 8080]
+    PROV[(Provisioning Script\nbash - orchestrator/provision.sh)]
+    BENCH[(Benchmark Harness\nbash + Node)]
 
     %% Images
-    BASE[(platform/base:phase1)\ndebian:bookworm-slim +\n    ttyd + tini (shared)]:::image
-    TARGET[(platform/target:phase1)\nphp + sqlite app]:::image
-    WEB[(bundles/web-exploitation:phase1)\nKali tools (sqlmap, hydra, whatweb)]:::image
-    NET[(bundles/network-recon:phase1)]:::image
-    PASS[(bundles/password-attacks:phase1)]:::image
+    BASE[(platform/base:phase1)\ndebian:bookworm-slim +\n    ttyd + tini (shared)]
+    TARGET[(platform/target:phase1)\nphp + sqlite app]
+    WEB[(bundles/web-exploitation:phase1)\nKali tools (sqlmap, hydra, whatweb)]
+    NET[(bundles/network-recon:phase1)]
+    PASS[(bundles/password-attacks:phase1)]
 
     %% Lab Configs
-    LAB[lab-configs/*.yaml\nFR-18 SSH opt-in]:::config
+    LAB[(lab-configs/*.yaml\nFR-18 SSH opt-in)]
 
     %% API Routes
-    ROUTES[REST API Endpoints:\nPOST /sessions, GET /sessions/:id,\nDELETE /sessions/:id,\nGET /benchmarks, POST /benchmarks/run]:::api
+    ROUTES[(POST /sessions, GET /sessions/:id,\nDELETE /sessions/:id,\nGET /benchmarks, POST /benchmarks/run)]
 
     %% Connections
     HOST --> DOCKER
@@ -46,11 +46,7 @@ graph TD
     API --> ROUTES
     PROV --> LAB
     BENCH --> API
-
-    classDef api fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    classDef script fill:#fff3e0,stroke:#fb8c00,stroke-width:2px
-    classDef image fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    classDef config fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px
+```
 ```
 
 ### High-Level Architecture
